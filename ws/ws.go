@@ -24,16 +24,30 @@ func WriteMessage(ch *amqp091.Channel, q amqp091.Queue, c *Connection) {
 			log.Printf("Failed to publish message:%v", err)
 			continue
 		}
-		log.Printf("Sent message: %s\n", message)
-		for conn := range c.wsConn {
-			err := conn.WriteMessage(websocket.TextMessage, message)
-			if err != nil {
-				log.Panic("Err", err)
-				conn.Close()
-				delete(c.wsConn, conn)
-			}
+		log.Printf("Sent message to RabbitMQ: %s\n", message)
+
+		msgs, err := rabbitmq.ConsumeMessage(ch, q)
+		if err != nil {
+			log.Printf("Failed to publish message:%v", err)
+			continue
 		}
+		log.Printf("Sent message: %s\n", message)
+		go func() {
+			for msg := range msgs {
+				log.Printf("Received message: %s\n", msg.Body)
+				for conn := range c.wsConn {
+					err := conn.WriteMessage(websocket.TextMessage, msg.Body)
+					if err != nil {
+						log.Panic("Err", err)
+						conn.Close()
+						delete(c.wsConn, conn)
+					}
+				}
+			}
+		}()
+
 	}
+
 }
 func ReadMessage(c *Connection) {
 	for conn := range c.wsConn {
