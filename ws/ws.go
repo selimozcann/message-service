@@ -18,57 +18,51 @@ func NewConnection(conn map[*websocket.Conn]bool) *Connection {
 }
 
 func WriteMessage(ch *amqp091.Channel, q amqp091.Queue, c *Connection) {
-	for message := range c.send {
-		err := rabbitmq.PublishMessage(ch, q, message)
-		if err != nil {
-			log.Printf("Failed to publish message:%v", err)
-			continue
-		}
-		log.Printf("Sent message to RabbitMQ: %s\n", message)
-
-		msgs, err := rabbitmq.ConsumeMessage(ch, q)
-		if err != nil {
-			log.Printf("Failed to publish message:%v", err)
-			continue
-		}
-		log.Printf("Sent message: %s\n", message)
-		go func() {
-			for msg := range msgs {
-				log.Printf("Received message: %s\n", msg.Body)
-				for conn := range c.wsConn {
-					err := conn.WriteMessage(websocket.TextMessage, msg.Body)
-					if err != nil {
-						log.Panic("Err", err)
-						conn.Close()
-						delete(c.wsConn, conn)
-					}
+	msgs, err := rabbitmq.ConsumeMessage(ch, q)
+	if err != nil {
+		log.Printf("Failed to publish message:%v", err)
+		return
+	}
+	go func() {
+		for msg := range msgs {
+			log.Printf("Received message: %s\n", msg.Body)
+			for conn := range c.wsConn {
+				log.Println("Sending message to websocket client")
+				err := conn.WriteMessage(websocket.TextMessage, msg.Body)
+				if err != nil {
+					log.Panic("Err", err)
+					conn.Close()
+					delete(c.wsConn, conn)
 				}
 			}
-		}()
-
-	}
-
+		}
+	}()
 }
-func ReadMessage(c *Connection) {
+func ReadMessage(ch *amqp091.Channel, q amqp091.Queue, c *Connection) {
 	for conn := range c.wsConn {
 		go func(conn *websocket.Conn) {
-			defer conn.Close()
 			for {
 				_, message, err := conn.ReadMessage()
 				if err != nil {
-					log.Println("Read error:", err)
+					log.Printf("ReadMessage Error: %v", err)
 					delete(c.wsConn, conn)
 					return
 				}
-				c.send <- message
+				err = rabbitmq.PublishMessage(ch, q, message)
+				if err != nil {
+					log.Printf("Failed to publish message: %v", err)
+				} else {
+					log.Printf("Sent message to RabbitMQ: %s", message)
+				}
 			}
 		}(conn)
 	}
 }
 func HandleConnection(ch *amqp091.Channel, q amqp091.Queue, c *websocket.Conn) {
-
 	connMap := map[*websocket.Conn]bool{c: true}
 	connection := NewConnection(connMap)
+
 	go WriteMessage(ch, q, connection)
-	go ReadMessage(connection)
+	go ReadMessage(ch, q, connection)
+
 }

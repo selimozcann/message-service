@@ -3,15 +3,21 @@ package main
 import (
 	"log"
 	"messageservice/ws"
-	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/rabbitmq/amqp091-go"
 )
 
-const (
-	PORT = ":3000"
-)
+const PORT = ":8080"
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+}
 
 func failOnError(err error, msg string) {
 	if err != nil {
@@ -38,17 +44,35 @@ func main() {
 	)
 	failOnError(err, "Failed to declare a queue")
 
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Println("Error check upgrading connection:", err)
-			return
-		}
-		ws.HandleConnection(ch, q, conn)
-	})
+	r := gin.Default()
 
-	log.Fatal(http.ListenAndServe(PORT, nil))
+	activeConnections := make(map[*websocket.Conn]bool)
+
+	r.GET("/ws", func(c *gin.Context) {
+		wsConn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		activeConnections[wsConn] = true
+
+		go func() {
+			ws.HandleConnection(ch, q, wsConn)
+			delete(activeConnections, wsConn)
+		}()
+	})
+	go func() {
+		sigint := make(chan os.Signal, 1)
+		signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM)
+		<-sigint
+
+		for conn := range activeConnections {
+			conn.Close()
+		}
+
+		log.Println("Server shutting down gracefully")
+		os.Exit(0)
+	}()
+
+	r.Run(PORT)
 }
