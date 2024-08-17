@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"log"
 	"messageservice/ws"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	_ "github.com/lib/pq" // PostgreSQL driver'ı
 	"github.com/rabbitmq/amqp091-go"
 )
 
@@ -26,23 +28,32 @@ func failOnError(err error, msg string) {
 }
 
 func main() {
+
+	connStr := "user=username password=password dbname=dbName sslmode=disable"
+	db, err := sql.Open("postgres", connStr)
+	failOnError(err, "PostgreSQL connection is not successful")
+	defer db.Close()
+
+	err = db.Ping()
+	failOnError(err, "PostgreSQL is not successful")
+
 	conn, err := amqp091.Dial("amqp://guest:guest@localhost:5672/")
-	failOnError(err, "Failed to connect to RabbitMQ")
+	failOnError(err, "RabbitMQ connection is not successful")
 	defer conn.Close()
 
 	ch, err := conn.Channel()
-	failOnError(err, "Failed to open a channel")
+	failOnError(err, "RabbitMQ channel is not successful")
 	defer ch.Close()
 
 	q, err := ch.QueueDeclare(
-		"websocket_queue", // Queue name
-		false,             // Durable?
-		false,             // Delete when unused?
-		false,             // Exclusive?
-		false,             // No-wait?
-		nil,               // Arguments
+		"websocket_queue",
+		false,
+		false,
+		false,
+		false,
+		nil,
 	)
-	failOnError(err, "Failed to declare a queue")
+	failOnError(err, "Queue is not successful")
 
 	r := gin.Default()
 
@@ -57,7 +68,7 @@ func main() {
 		activeConnections[wsConn] = true
 
 		go func() {
-			ws.HandleConnection(ch, q, wsConn)
+			ws.HandleConnection(ch, q, wsConn, db)
 			delete(activeConnections, wsConn)
 		}()
 	})
@@ -70,7 +81,7 @@ func main() {
 			conn.Close()
 		}
 
-		log.Println("Server shutting down gracefully")
+		log.Println("Server is shutting down...")
 		os.Exit(0)
 	}()
 
