@@ -1,2 +1,2 @@
 # message-service
-Golang Message Service
+This project provides a foundation for real-time messaging applications. Developed in Go, it integrates with a PostgreSQL database and supports real-time communication via WebSocket. Messages are managed using RabbitMQ and are persistently stored in PostgreSQL. The flexible and scalable architecture allows it to be easily adapted to different projects. This open-source project is an excellent starting point for developers looking to build modern, real-time messaging applications.
